@@ -126,7 +126,7 @@ def process_single_url(url, logo_gray, target_word):
 
 # --- Streamlit Frontend UI ---
 st.title("High-Speed Bulk URL Scanner")
-st.markdown("Paste image or website URLs. The scanner performs substring matching (e.g. `lyve` matches `textlyve` and `lyve.el.com`).")
+st.markdown("Paste image or website URLs.")
 
 col1, col2 = st.columns([1, 2])
 
