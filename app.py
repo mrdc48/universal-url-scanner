@@ -37,7 +37,10 @@ def multi_scale_template_match(target_gray, logo_gray, threshold=0.7):
     return False
 
 def process_single_url(url, logo_gray, target_word):
-    word_found = "Yes" if target_word.lower() in url.lower() else "No"
+    target_lower = target_word.lower()
+    
+    # 1. Check URL string (e.g., catches lyve.el.com or example.com/textlyve)
+    word_found = "Yes" if target_lower in url.lower() else "No"
     logo_found = "No"
     
     try:
@@ -48,6 +51,9 @@ def process_single_url(url, logo_gray, target_word):
         content_type = response.headers.get('Content-Type', '').lower()
         
         if 'image' in content_type:
+            # ==========================================
+            # IMAGE PROCESSING PIPELINE
+            # ==========================================
             image_bytes = response.content
             nparr = np.frombuffer(image_bytes, np.uint8)
             cv_img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
@@ -67,9 +73,11 @@ def process_single_url(url, logo_gray, target_word):
                     text_candidates.append(pytesseract.image_to_string(p_img, config='--psm 11'))
                     text_candidates.append(pytesseract.image_to_string(p_img, config='--psm 6'))
                 
+                # Combine all OCR outputs and lower case
                 full_text = " ".join(text_candidates).lower()
                 
-                if target_word.lower() in full_text:
+                # Substring check in image text
+                if target_lower in full_text:
                     word_found = "Yes"
                 
                 if logo_gray is not None:
@@ -81,22 +89,27 @@ def process_single_url(url, logo_gray, target_word):
                 logo_found = "Error Decoding"
         
         elif 'text/html' in content_type or 'text/plain' in content_type:
+            # ==========================================
+            # WEBPAGE PROCESSING PIPELINE
+            # ==========================================
             soup = BeautifulSoup(response.content, 'html.parser')
             
+            # 2. Check Title tag
             title_tag = soup.find('title')
             title_text = title_tag.get_text(strip=True).lower() if title_tag else ""
-            
-            if target_word.lower() in title_text:
+            if target_lower in title_text:
                 word_found = "Yes"
             
+            # 3. Check visible Body text (ignoring script/style/noscript)
             body = soup.find('body')
             if body:
                 for element in body(["script", "style", "noscript"]):
                     element.extract()
                 
-                page_text = body.get_text(separator=' ', strip=True).lower()
+                # Get raw text string
+                page_text = body.get_text(separator='', strip=True).lower()
                 
-                if target_word.lower() in page_text:
+                if target_lower in page_text:
                     word_found = "Yes"
             
             logo_found = "N/A (Webpage)" 
@@ -113,7 +126,7 @@ def process_single_url(url, logo_gray, target_word):
 
 # --- Streamlit Frontend UI ---
 st.title("High-Speed Bulk URL Scanner")
-st.markdown("Paste image or website URLs. The script uses multithreading to scan up to 10 links simultaneously.")
+st.markdown("Paste image or website URLs. The scanner performs substring matching (e.g. `lyve` matches `textlyve` and `lyve.el.com`).")
 
 col1, col2 = st.columns([1, 2])
 
@@ -130,10 +143,8 @@ with col2:
         elif not input_word or not input_word.strip():
             st.warning("Please provide a target word.")
         else:
-            # Clean and deduplicate URLs
             target_urls = list(set([url.strip() for url in input_urls.split('\n') if url.strip()]))
             
-            # Process uploaded logo into OpenCV format natively in RAM
             logo_gray = None
             if input_logo is not None:
                 file_bytes = np.asarray(bytearray(input_logo.read()), dtype=np.uint8)
@@ -141,25 +152,21 @@ with col2:
             
             results = []
             
-            # Setup visual progress indicators
             progress_bar = st.progress(0)
             status_text = st.empty()
             
             completed = 0
             total = len(target_urls)
             
-            # Execute multithreaded scanning
             with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
                 futures = {executor.submit(process_single_url, url, logo_gray, input_word): url for url in target_urls}
                 for future in concurrent.futures.as_completed(futures):
                     results.append(future.result())
                     completed += 1
-                    # Update frontend in real time
                     progress_bar.progress(completed / total)
                     status_text.text(f"Scanned {completed} of {total} URLs...")
             
             status_text.success("Scan Complete!")
             
-            # Output Results
             df = pd.DataFrame(results, columns=["URL", f"Word '{input_word}' Found", "Logo Found"])
             st.dataframe(df, use_container_width=True)
